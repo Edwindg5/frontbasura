@@ -1,0 +1,945 @@
+// Function to run demo mode with simulated data
+            function startDemoMode() {
+                // Mark as in demo mode
+                window.demoMode = true;
+                
+                // Update connection status to demo mode
+                if (statusIndicator && statusText && connectionStatus) {
+                    statusIndicator.className = 'h-3 w-3 rounded-full bg-green-500 mr-2';
+                    statusText.textContent = 'Modo Demo';
+                    connectionStatus.classList.remove('bg-gray-100');
+                    connectionStatus.classList.add('bg-green-50');
+                    showNotification('Modo demostración activado. Los datos son simulados.', 'info');
+                }
+                
+                // Add initial activity items
+                addActivityItem('Modo demostración iniciado', 'play-circle');
+                addActivityItem('Generando datos simulados', 'robot');
+                
+                // Simulate data every 2 seconds
+                let demoInterval = setInterval(() => {
+                    // Generate random distance between 5 and 100 cm
+                    const randomDistance = Math.random() * 95 + 5;
+                    
+                    // Create simulated MQTT message
+                    const simulatedData = {
+                        distancia: randomDistance,
+                        estado: randomDistance < 20 ? 'abierto' : 'cerrado',
+                        timestamp: new Date().getTime()
+                    };
+                    
+                    // Process the simulated data
+                    processMessage(simulatedData);
+                    
+                }, 2000);
+                
+                // Store interval ID in window to be able to clear it if needed
+                window.demoInterval = demoInterval;
+                
+                // Return true to indicate success
+                return true;
+            }<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EcoSmart Bin</title>
+    
+    <!-- Scripts y CDNs -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="https://unpkg.com/@dotlottie/player-component@2.7.12/dist/dotlottie-player.mjs" type="module"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            200: '#bfdbfe',
+                            300: '#93c5fd',
+                            400: '#60a5fa',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                            800: '#1e40af',
+                            900: '#1e3a8a',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        /* Estilos mínimos adicionales que pueden ser necesarios */
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.8; }
+        }
+        
+        @keyframes wave {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+        
+        .bin-status-indicator {
+            animation: pulse 2s infinite;
+        }
+        
+        .sensor-wave {
+            position: absolute;
+            border-radius: 50%;
+            border: 2px solid #3B82F6;
+            opacity: 0;
+        }
+        
+        .bin-particle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background-color: rgba(59, 130, 246, 0.5);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 min-h-screen">
+    <!-- Overlay de carga -->
+    <div id="loading-overlay" class="fixed inset-0 flex items-center justify-center bg-white z-50 transition-opacity">
+        <div class="flex flex-col items-center">
+            <div class="w-16 h-16 border-4 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
+            <p class="mt-4 text-gray-600 font-medium">Cargando...</p>
+        </div>
+    </div>
+
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="mb-8 bg-white rounded-xl shadow-md p-6">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-4">
+                    <div class="bg-gradient-to-r from-primary-600 to-primary-500 w-12 h-12 rounded-full flex items-center justify-center shadow-lg">
+                        <i class="fas fa-trash-alt text-white text-xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold text-black bg-clip-text text-transparent bg-gradient-to-r from-primary-900 to-primary-700">EcoSmart Bin</h1>
+                        <p class="text-gray-800 text-sm font-medium">Sistema avanzado de gestión de residuos</p>
+                    </div>
+                </div>
+                <div id="connection-status" class="flex items-center px-4 py-2 bg-gray-100 rounded-full">
+                    <span id="status-indicator" class="h-3 w-3 rounded-full bg-gray-400 mr-2"></span>
+                    <span id="status-text" class="text-sm text-gray-600 font-medium">Desconectado</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Panel de visualización del basurero -->
+            <div class="lg:col-span-2 bg-white rounded-xl shadow-md p-6">
+                <h2 class="text-xl font-bold text-gray-900 mb-6 flex items-center">
+                    <i class="fas fa-chart-line text-primary-600 mr-2"></i>
+                    Visualización en Tiempo Real
+                </h2>
+                
+                <div class="flex flex-col items-center justify-center h-96 relative">
+                    <!-- Sensor ultrasónico -->
+                    <div class="absolute top-0 w-full flex justify-center">
+                        <div id="ultrasonic-sensor" class="relative p-2 bg-primary-500 rounded-lg mb-4 shadow-md">
+                            <i class="fas fa-satellite-dish text-white"></i>
+                            <div id="sensor-waves-container"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Lottie Animation -->
+                    <div class="lottie-container relative w-full h-full flex items-center justify-center" id="lottie-container">
+                        <dotlottie-player id="bin-animation" 
+                            src="https://lottie.host/70c152d5-db22-4bfe-86c4-5365bc7881c5/RiQjRwi85L.lottie" 
+                            background="transparent" 
+                            speed="1" 
+                            style="width: 300px; height: 300px" 
+                            autoplay>
+                        </dotlottie-player>
+                        
+                        <div id="bin-status-badge" class="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-white px-4 py-2 rounded-full shadow-md flex items-center">
+                            <i id="bin-status-icon" class="fas fa-lock text-primary-600 mr-2"></i>
+                            <span id="bin-status-text" class="font-bold text-gray-900">CERRADO</span>
+                        </div>
+                        
+                        <!-- Contenedor de partículas -->
+                        <div id="bin-particles" class="absolute inset-0 pointer-events-none"></div>
+                    </div>
+                    
+                    <!-- Controles del basurero -->
+                    <div class="mt-8 flex space-x-4">
+                        <button id="btn-open" class="bg-gradient-to-r from-primary-600 to-primary-500 text-white px-6 py-3 rounded-full shadow-md hover:shadow-lg transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-opacity-50 flex items-center">
+                            <i class="fas fa-door-open mr-2"></i>
+                            Abrir
+                        </button>
+                        <button id="btn-close" class="bg-gradient-to-r from-gray-700 to-gray-600 text-white px-6 py-3 rounded-full shadow-md hover:shadow-lg transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50 flex items-center">
+                            <i class="fas fa-door-closed mr-2"></i>
+                            Cerrar
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Panel de estadísticas y actividad -->
+            <div class="space-y-6">
+                <!-- Tarjeta de distancia -->
+                <div class="bg-gradient-to-r from-primary-600 to-primary-500 rounded-xl shadow-md p-6 text-white">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-white text-sm font-semibold mb-1">Distancia del Sensor</p>
+                            <h3 id="distance-value" class="text-3xl font-extrabold">-- cm</h3>
+                            <p id="distance-status" class="text-sm mt-1 text-white font-medium">Esperando datos...</p>
+                        </div>
+                        <div class="p-3 bg-white bg-opacity-20 rounded-xl">
+                            <i class="fas fa-ruler-vertical text-white text-xl"></i>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4 bg-white bg-opacity-20 h-2 rounded-full overflow-hidden">
+                        <div id="distance-bar-fill" class="h-full bg-white rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                </div>
+                
+                <!-- Tarjeta de estado -->
+                <div class="bg-gradient-to-r from-green-600 to-green-500 rounded-xl shadow-md p-6 text-white">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-white text-sm font-semibold mb-1">Estado Actual</p>
+                            <h3 id="status-value" class="text-3xl font-extrabold">--</h3>
+                        </div>
+                        <div class="p-3 bg-white bg-opacity-20 rounded-xl">
+                            <i class="fas fa-info-circle text-white text-xl"></i>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4 h-24 w-full">
+                        <canvas id="status-chart" class="w-full h-full"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Actividad reciente -->
+                <div class="bg-white rounded-xl shadow-md p-6 flex flex-col h-80">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold text-gray-900 flex items-center">
+                            <i class="fas fa-history text-primary-600 mr-2"></i>
+                            Actividad Reciente
+                        </h3>
+                    </div>
+                    
+                    <div id="activity-timeline" class="overflow-y-auto flex-grow pr-2 space-y-3">
+                        <!-- Los elementos de actividad se añadirán aquí dinámicamente -->
+                    </div>
+                    
+                    <!-- Conexión -->
+                    <div class="flex items-center space-x-2 bg-blue-50 p-2 rounded-lg">
+                        <button id="reconnect-btn" class="bg-blue-500 text-white rounded-lg px-3 py-1 text-sm font-medium hover:bg-blue-600 transition-colors">
+                            <i class="fas fa-sync-alt mr-1"></i> Reconectar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Panel de conexión MQTT (oculto por defecto y no utilizado) -->
+        <div id="connection-panel" class="fixed inset-0 bg-black bg-opacity-50 backdrop-filter backdrop-blur-sm flex items-center justify-center z-50 hidden">
+            <div class="bg-white rounded-xl shadow-xl p-8 w-full max-w-md transform transition-all duration-300 scale-95 opacity-0" id="connection-form">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-xl font-bold text-gray-900">Configuración de WebSocket</h3>
+                                            <button id="form-close" class="text-gray-500 hover:text-gray-900 focus:outline-none text-2xl">&times;</button>
+                </div>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label for="mqtt-server" class="block text-sm font-semibold text-gray-900 mb-1">Servidor MQTT</label>
+                        <input type="text" id="mqtt-server" value="44.197.3.131" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                    </div>
+                    
+                    <div>
+                        <label for="mqtt-port" class="block text-sm font-semibold text-gray-900 mb-1">Puerto</label>
+                        <input type="number" id="mqtt-port" value="1883" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                    </div>
+                    
+                    <div>
+                        <label for="mqtt-user" class="block text-sm font-semibold text-gray-900 mb-1">Usuario</label>
+                        <input type="text" id="mqtt-user" value="admin" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                    </div>
+                    
+                    <div>
+                        <label for="mqtt-password" class="block text-sm font-semibold text-gray-900 mb-1">Contraseña</label>
+                        <input type="password" id="mqtt-password" value="admin" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                    </div>
+                    
+                    <div>
+                        <label for="mqtt-topic" class="block text-sm font-semibold text-gray-900 mb-1">Topic</label>
+                        <input type="text" id="mqtt-topic" value="/sensor" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                    </div>
+                    
+                                            <button id="connect-btn" class="w-full bg-primary-600 hover:bg-primary-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-all duration-300 mt-2">
+                        Conectar
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Panel de notificaciones -->
+        <div id="notification-panel" class="fixed bottom-4 right-4 max-w-sm transform transition-transform duration-300 translate-y-10 opacity-0 z-40">
+            <div class="bg-white rounded-lg shadow-xl overflow-hidden">
+                <div id="notification-content" class="p-4 border-l-4 border-primary-500 flex items-start">
+                    <div id="notification-icon" class="text-primary-500 mt-0.5 mr-3">
+                        <i class="fas fa-info-circle text-lg"></i>
+                    </div>
+                    <div class="flex-1">
+                        <h4 id="notification-title" class="font-bold text-gray-900 text-base">Información</h4>
+                        <p id="notification-message" class="text-gray-800 text-sm">Este es un mensaje de notificación.</p>
+                    </div>
+                    <button id="notification-close" class="text-gray-500 hover:text-gray-900 ml-2">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Ocultar overlay de carga después de un tiempo
+            setTimeout(() => {
+                const loadingOverlay = document.getElementById('loading-overlay');
+                if (loadingOverlay) {
+                    loadingOverlay.classList.add('opacity-0');
+                    setTimeout(() => {
+                        loadingOverlay.classList.add('hidden');
+                    }, 500);
+                }
+                
+                // Inicializar el sistema y conectar automáticamente
+                initializeSystem();
+            }, 1500);
+        });
+
+        // Función principal de inicialización
+        function initializeSystem() {
+            // Variables para el sistema
+            let connected = false;
+            let binOpen = false;
+            let currentDistance = 0;
+            let statusHistory = Array(20).fill(0);
+            let messageHistory = [];
+            
+            // Elementos del DOM
+            const connectionPanel = document.getElementById('connection-panel');
+            const connectionForm = document.getElementById('connection-form');
+            const formClose = document.getElementById('form-close');
+            const connectBtn = document.getElementById('connect-btn');
+            const connectionStatus = document.getElementById('connection-status');
+            const statusIndicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status-text');
+            const binStatusIcon = document.getElementById('bin-status-icon');
+            const binStatusText = document.getElementById('bin-status-text');
+            const distanceValue = document.getElementById('distance-value');
+            const distanceBarFill = document.getElementById('distance-bar-fill');
+            const distanceStatus = document.getElementById('distance-status');
+            const statusValue = document.getElementById('status-value');
+            const activityTimeline = document.getElementById('activity-timeline');
+            const openButton = document.getElementById('btn-open');
+            const closeButton = document.getElementById('btn-close');
+            const notificationPanel = document.getElementById('notification-panel');
+            const notificationContent = document.getElementById('notification-content');
+            const notificationIcon = document.getElementById('notification-icon');
+            const notificationTitle = document.getElementById('notification-title');
+            const notificationMessage = document.getElementById('notification-message');
+            const notificationClose = document.getElementById('notification-close');
+            const settingsBtn = document.getElementById('settings-btn');
+            
+            // Inicializar gráfico de estado
+            const statusChart = document.getElementById('status-chart');
+            let chart = null;
+            
+            if (statusChart && typeof Chart !== 'undefined') {
+                const ctx = statusChart.getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: Array(20).fill(''),
+                        datasets: [{
+                            label: 'Estado',
+                            data: Array(20).fill(null),
+                            backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                            borderColor: 'rgba(255, 255, 255, 0.8)',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            pointHoverRadius: 3,
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                display: false
+                            },
+                            y: {
+                                display: false,
+                                min: 0,
+                                max: 1
+                            }
+                        },
+                        animation: {
+                            duration: 800
+                        }
+                    }
+                });
+            }
+            
+            // Función para mostrar el panel de conexión
+            function showConnectionPanel() {
+                if (connectionPanel && connectionForm) {
+                    connectionPanel.classList.remove('hidden');
+                    setTimeout(() => {
+                        connectionForm.classList.remove('scale-95', 'opacity-0');
+                        connectionForm.classList.add('scale-100', 'opacity-100');
+                    }, 10);
+                }
+            }
+            
+            // Función para ocultar el panel de conexión
+            function hideConnectionPanel() {
+                if (connectionPanel && connectionForm) {
+                    connectionForm.classList.remove('scale-100', 'opacity-100');
+                    connectionForm.classList.add('scale-95', 'opacity-0');
+                    setTimeout(() => {
+                        connectionPanel.classList.add('hidden');
+                    }, 300);
+                }
+            }
+            
+            // Función para conectarse automáticamente al WebSocket
+            function connectWebSocketAutomatic() {
+                const wsUrl = "wss://tjqpbgnh-5000.usw3.devtunnels.ms/v1/messages/ws";
+                const topic = "amq.topic";
+                
+                // Actualizar estado de conexión
+                if (statusIndicator && statusText) {
+                    statusIndicator.className = 'h-3 w-3 rounded-full bg-yellow-500 mr-2';
+                    statusText.textContent = 'Conectando...';
+                }
+                
+                try {
+                    // Crear conexión WebSocket
+                    const ws = new WebSocket(wsUrl);
+                    
+                    // Manejar eventos de conexión
+                    ws.onopen = function() {
+                        console.log('Conectado al WebSocket');
+                        connected = true;
+                        updateConnectionStatus(true);
+                        
+                        // Suscribirse al topic enviando un mensaje de suscripción
+                        const subscribeMsg = {
+                            action: "subscribe",
+                            topic: topic
+                        };
+                        ws.send(JSON.stringify(subscribeMsg));
+                        
+                        showNotification(`Conectado exitosamente`, 'success');
+                        addActivityItem(`Conectado al WebSocket con topic ${topic}`, 'wifi');
+                        
+                        // Guardar referencia global al WebSocket y topic
+                        window.webSocket = ws;
+                        window.currentTopic = topic;
+                    };
+                    
+                    // Manejar eventos de mensaje
+                    ws.onmessage = function(event) {
+                        try {
+                            let data = JSON.parse(event.data);
+                            data = data.sensor_data
+                            console.log('Mensaje recibido:', data);
+                            
+                            // Guardar mensaje en historial
+                            messageHistory.push({
+                                timestamp: new Date(),
+                                data: data
+                            });
+                            
+                            // Limitar tamaño del historial
+                            if (messageHistory.length > 100) {
+                                messageHistory.shift();
+                            }
+                            
+                            // Procesar mensaje
+                            processMessage(data);
+                        } catch (e) {
+                            console.error('Error al procesar mensaje:', e);
+                            console.log('Mensaje original:', event.data);
+                            showNotification(`Error al procesar mensaje: ${e.message}`, 'error');
+                        }
+                    };
+                    
+                    // Manejar eventos de error
+                    ws.onerror = function(error) {
+                        console.error('Error WebSocket:', error);
+                        showNotification(`Error de conexión. Intente recargar la página.`, 'error');
+                        updateConnectionStatus(false);
+                    };
+                    
+                    // Manejar eventos de cierre
+                    ws.onclose = function(event) {
+                        console.log('Conexión WebSocket cerrada:', event.code, event.reason);
+                        connected = false;
+                        updateConnectionStatus(false);
+                        
+                        // Intentar reconexión después de un tiempo
+                        setTimeout(() => {
+                            if (!connected) {
+                                showNotification('Conexión perdida. Intentando reconectar...', 'warning');
+                                connectWebSocketAutomatic();
+                            }
+                        }, 5000);
+                    };
+                    
+                } catch (e) {
+                    console.error('Error al crear conexión WebSocket:', e);
+                    showNotification(`Error de conexión. Intente recargar la página.`, 'error');
+                    updateConnectionStatus(false);
+                }
+            }
+            
+            // Procesar mensajes MQTT
+            function processMessage(data) {
+                // Verificar datos de distancia
+                if (data.distancia !== undefined) {
+            
+                    updateDistance(data.distancia);
+                }
+                
+                // Verificar datos de estado
+                if (data.estado !== undefined) {
+                    updateBinState(data.estado === 'abierto');
+                }
+                
+                // Añadir actividad
+                addActivityItem(`Datos recibidos: ${data.distancia}cm / ${data.estado}`, 'exchange');
+            }
+            
+            // Publicar comandos al WebSocket
+            function publishCommand(command) {
+                if (!connected || !window.webSocket) {
+                    showNotification('No conectado al WebSocket', 'error');
+                    return false;
+                }
+                
+                const topic = window.currentTopic || "amq.topic";
+                const payload = JSON.stringify({
+                    action: "publish",
+                    topic: topic,
+                    message: JSON.stringify({
+                        command: command,
+                        timestamp: new Date().getTime()
+                    })
+                });
+                
+                try {
+                    window.webSocket.send(payload);
+                    console.log(`Comando publicado: ${command}`);
+                    return true;
+                } catch (err) {
+                    console.error('Error al publicar mensaje:', err);
+                    showNotification(`Error al publicar mensaje: ${err.message}`, 'error');
+                    return false;
+                }
+            }
+            
+            // Actualizar estado de conexión
+            function updateConnectionStatus(isConnected) {
+                if (statusIndicator && statusText && connectionStatus) {
+                    if (isConnected) {
+                        statusIndicator.className = 'h-3 w-3 rounded-full bg-green-500 mr-2';
+                        statusText.textContent = 'Conectado';
+                        connectionStatus.classList.remove('bg-gray-100');
+                        connectionStatus.classList.add('bg-green-50');
+                        showNotification('Conexión establecida con el basurero inteligente', 'success');
+                        connected = true;
+                    } else {
+                        statusIndicator.className = 'h-3 w-3 rounded-full bg-red-500 mr-2';
+                        statusText.textContent = 'Desconectado';
+                        connectionStatus.classList.remove('bg-green-50');
+                        connectionStatus.classList.add('bg-gray-100');
+                        showNotification('Conexión perdida con el dispositivo', 'error');
+                        connected = false;
+                    }
+                }
+            }
+            
+            // Actualizar estado del basurero
+            function updateBinState(isOpen) {
+                binOpen = isOpen;
+                
+                // Obtener el reproductor de Lottie
+                const lottiePlayer = document.getElementById('bin-animation');
+                
+                if (isOpen) {
+                    // Controlar animación para estado abierto
+                    if (lottiePlayer && typeof lottiePlayer.play === 'function') {
+                        lottiePlayer.play();
+                        if (typeof lottiePlayer.setDirection === 'function') {
+                            lottiePlayer.setDirection(1); // Dirección hacia adelante
+                        }
+                    }
+                    
+                    if (binStatusIcon) binStatusIcon.className = 'fas fa-lock-open text-green-600 mr-2';
+                    if (binStatusText) {
+                        binStatusText.textContent = 'ABIERTO';
+                        binStatusText.classList.remove('text-gray-700');
+                        binStatusText.classList.add('text-green-700');
+                    }
+                    if (statusValue) statusValue.textContent = 'Abierto';
+                    
+                    addActivityItem('Basurero abierto', 'door-open');
+                    createSensorWaves();
+                    createBinParticles();
+                    
+                    // Actualizar datos del gráfico
+                    updateStatusHistory(1); // 1 para abierto
+                } else {
+                    // Controlar animación para estado cerrado
+                    if (lottiePlayer && typeof lottiePlayer.setDirection === 'function' && typeof lottiePlayer.play === 'function') {
+                        lottiePlayer.setDirection(-1); // Dirección inversa
+                        lottiePlayer.play();
+                    }
+                    
+                    if (binStatusIcon) binStatusIcon.className = 'fas fa-lock text-primary-600 mr-2';
+                    if (binStatusText) {
+                        binStatusText.textContent = 'CERRADO';
+                        binStatusText.classList.remove('text-green-700');
+                        binStatusText.classList.add('text-gray-700');
+                    }
+                    if (statusValue) statusValue.textContent = 'Cerrado';
+                    
+                    addActivityItem('Basurero cerrado', 'door-closed');
+                    
+                    // Actualizar datos del gráfico
+                    updateStatusHistory(0); // 0 para cerrado
+                }
+            }
+            
+            // Actualizar datos del gráfico de estado
+            function updateStatusHistory(status) {
+                if (!chart) return;
+                
+                // Añadir nuevo punto de datos
+                const now = new Date();
+                const timeStr = now.getHours() + ':' + String(now.getMinutes()).padStart(2, '0');
+                
+                // Actualizar datos del gráfico
+                chart.data.datasets[0].data.shift();
+                chart.data.datasets[0].data.push(status);
+                chart.data.labels.shift();
+                chart.data.labels.push(timeStr);
+                
+                // Actualizar gráfico
+                chart.update();
+            }
+            
+            // Actualizar distancia
+            function updateDistance(distance) {
+                if (distanceValue) distanceValue.textContent = `${distance.toFixed(1)} cm`;
+                
+                // Actualizar barra de distancia (relación inversa - más cerca = más lleno)
+                const MAX_DISTANCE = 100; // Distancia máxima en cm
+                let percentage = Math.max(0, Math.min(100, 100 - (distance / MAX_DISTANCE * 100)));
+                if (distanceBarFill) distanceBarFill.style.width = `${percentage}%`;
+                
+                // Actualizar texto de estado
+                if (distanceStatus) {
+                    if (distance < 20) {
+                        distanceStatus.textContent = "Objeto cercano detectado";
+                        distanceStatus.className = "text-sm mt-1 text-white font-medium";
+                    } else if (distance < 50) {
+                        distanceStatus.textContent = "Objeto a distancia media";
+                        distanceStatus.className = "text-sm mt-1 text-primary-100";
+                    } else {
+                        distanceStatus.textContent = "Ningún objeto cercano";
+                        distanceStatus.className = "text-sm mt-1 text-primary-100";
+                    }
+                }
+                
+                currentDistance = distance;
+                
+                // Actualizar automáticamente el estado basado en la distancia (simulando la lógica de Arduino)
+                if (distance > 0 && distance < 20) {
+                    if (!binOpen) {
+                        updateBinState(true);
+                    }
+                } else {
+                    if (binOpen) {
+                        updateBinState(false);
+                    }
+                }
+            }
+            
+            // Añadir ítem de actividad
+            function addActivityItem(text, icon = 'history') {
+                if (!activityTimeline) return;
+                
+                const now = new Date();
+                const timeString = now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                
+                const item = document.createElement('div');
+                item.className = 'flex items-start opacity-0 transform translate-y-4 transition-all duration-300';
+                item.innerHTML = `
+                    <div class="flex-shrink-0 w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center mr-3">
+                        <i class="fas fa-${icon} text-primary-600 text-sm"></i>
+                    </div>
+                    <div class="flex-1 bg-gray-50 rounded-lg p-3 border border-gray-100">
+                        <p class="text-sm text-gray-900 font-medium">${text}</p>
+                        <span class="text-xs text-gray-700">${timeString}</span>
+                    </div>
+                `;
+                
+                // Añadir al principio de la línea de tiempo
+                if (activityTimeline.firstChild) {
+                    activityTimeline.insertBefore(item, activityTimeline.firstChild);
+                } else {
+                    activityTimeline.appendChild(item);
+                }
+                
+                // Mantener solo los últimos 8 ítems
+                const items = activityTimeline.children;
+                if (items.length > 8) {
+                    activityTimeline.removeChild(items[items.length - 1]);
+                }
+                
+                // Animar la entrada con un pequeño retraso
+                setTimeout(() => {
+                    item.classList.remove('opacity-0', 'translate-y-4');
+                }, 10);
+            }
+            
+            // Crear ondas del sensor
+            function createSensorWaves() {
+                const sensorContainer = document.getElementById('sensor-waves-container');
+                if (!sensorContainer) return;
+                
+                sensorContainer.innerHTML = '';
+                
+                for (let i = 0; i < 3; i++) {
+                    const wave = document.createElement('div');
+                    wave.className = 'sensor-wave absolute';
+                    sensorContainer.appendChild(wave);
+                    
+                    // Animar la onda
+                    setTimeout(() => {
+                        wave.style.transition = 'all 2s ease-out';
+                        wave.style.width = '60px';
+                        wave.style.height = '60px';
+                        wave.style.top = '50%';
+                        wave.style.left = '50%';
+                        wave.style.transform = 'translate(-50%, -50%)';
+                        wave.style.opacity = '0.7';
+                        
+                        setTimeout(() => {
+                            wave.style.opacity = '0';
+                            setTimeout(() => {
+                                wave.remove();
+                            }, 1000);
+                        }, 1000);
+                    }, i * 400);
+                }
+            }
+            
+            // Crear partículas cuando el basurero está abierto
+            function createBinParticles() {
+                if (!binOpen) return;
+                
+                const lottiePlayer = document.getElementById('bin-animation');
+                const particlesContainer = document.getElementById('bin-particles');
+                
+                if (!lottiePlayer || !particlesContainer) return;
+                
+                for (let i = 0; i < 8; i++) {
+                    const particle = document.createElement('div');
+                    particle.className = 'bin-particle';
+                    
+                    // Tamaño aleatorio entre 3 y 8 píxeles
+                    const size = Math.random() * 5 + 3;
+                    particle.style.width = `${size}px`;
+                    particle.style.height = `${size}px`;
+                    
+                    // Posición en la parte superior del basurero
+                    const binRect = lottiePlayer.getBoundingClientRect();
+                    const containerRect = particlesContainer.getBoundingClientRect();
+                    
+                    const startX = binRect.left - containerRect.left + binRect.width / 2 + (Math.random() * 20 - 10);
+                    const startY = binRect.top - containerRect.top + binRect.height / 2;
+                    
+                    particle.style.left = `${startX}px`;
+                    particle.style.top = `${startY}px`;
+                    
+                    particlesContainer.appendChild(particle);
+                    
+                    // Animar la partícula
+                    const duration = 1 + Math.random() * 2;
+                    particle.style.transition = `all ${duration}s ease-out`;
+                    
+                    setTimeout(() => {
+                        particle.style.transform = `translateY(-${50 + Math.random() * 100}px) translateX(${Math.random() * 60 - 30}px)`;
+                        particle.style.opacity = '0';
+                        
+                        setTimeout(() => {
+                            particle.remove();
+                        }, duration * 1000);
+                    }, 10);
+                }
+            }
+            
+            // Mostrar notificación
+            function showNotification(message, type = 'info') {
+                if (!notificationPanel || !notificationContent || !notificationIcon || !notificationTitle || !notificationMessage) {
+                    console.error('Elementos de notificación no encontrados');
+                    return;
+                }
+                
+                // Configurar tipo de notificación
+                const types = {
+                    info: {
+                        icon: 'info-circle',
+                        title: 'Información',
+                        color: 'primary',
+                        textColor: 'primary'
+                    },
+                    success: {
+                        icon: 'check-circle',
+                        title: 'Éxito',
+                        color: 'green',
+                        textColor: 'green'
+                    },
+                    warning: {
+                        icon: 'exclamation-triangle',
+                        title: 'Advertencia',
+                        color: 'yellow',
+                        textColor: 'yellow'
+                    },
+                    error: {
+                        icon: 'times-circle',
+                        title: 'Error',
+                        color: 'red',
+                        textColor: 'red'
+                    }
+                };
+                
+                const config = types[type] || types.info;
+                
+                // Actualizar contenido de notificación
+                notificationContent.className = `p-4 border-l-4 border-${config.color}-500 flex items-start`;
+                notificationIcon.className = `text-${config.textColor}-500 mt-0.5 mr-3`;
+                notificationIcon.innerHTML = `<i class="fas fa-${config.icon} text-lg"></i>`;
+                notificationTitle.textContent = config.title;
+                notificationMessage.textContent = message;
+                
+                // Mostrar notificación
+                notificationPanel.classList.remove('translate-y-10', 'opacity-0');
+                
+                // Ocultar automáticamente después de 5 segundos
+                setTimeout(() => {
+                    notificationPanel.classList.add('translate-y-10', 'opacity-0');
+                }, 5000);
+            }
+            
+            // Event listeners para botones
+            if (openButton) {
+                openButton.addEventListener('click', () => {
+                    updateBinState(true);
+                    showNotification('Enviando comando para abrir basurero', 'info');
+                    publishCommand('open');
+                });
+            }
+            
+            if (closeButton) {
+                closeButton.addEventListener('click', () => {
+                    updateBinState(false);
+                    showNotification('Enviando comando para cerrar basurero', 'info');
+                    publishCommand('close');
+                });
+            }
+            
+            // Botón para cerrar notificación
+            if (notificationClose) {
+                notificationClose.addEventListener('click', () => {
+                    notificationPanel.classList.add('translate-y-10', 'opacity-0');
+                });
+            }
+            
+            // Botón de reconexión
+            const reconnectBtn = document.getElementById('reconnect-btn');
+            if (reconnectBtn) {
+                reconnectBtn.addEventListener('click', () => {
+                    // Si hay una conexión WebSocket activa, cerrarla
+                    if (window.webSocket) {
+                        if (window.webSocket.readyState === WebSocket.OPEN || 
+                            window.webSocket.readyState === WebSocket.CONNECTING) {
+                            window.webSocket.close();
+                        }
+                    }
+                    
+                    // Mostrar mensaje
+                    showNotification('Intentando reconectar...', 'info');
+                    
+                    // Reconectar
+                    setTimeout(() => {
+                        connectWebSocketAutomatic();
+                    }, 500);
+                });
+            }
+            
+            // Botones del formulario de conexión
+            if (formClose) {
+                formClose.addEventListener('click', hideConnectionPanel);
+            }
+            
+            if (connectBtn) {
+                connectBtn.addEventListener('click', connectWebSocketAutomatic);
+            }
+            
+            // Animación sutil para Lottie al mover el ratón
+            const lottiePlayer = document.getElementById('bin-animation');
+            if (lottiePlayer) {
+                document.addEventListener('mousemove', (e) => {
+                    const xAxis = (window.innerWidth / 2 - e.pageX) / 100;
+                    const yAxis = (window.innerHeight / 2 - e.pageY) / 100;
+                    
+                    // Animar con transición CSS
+                    lottiePlayer.style.transition = 'transform 1s ease-out';
+                    lottiePlayer.style.transform = `translateX(${xAxis * 5}px) translateY(${yAxis * 5}px)`;
+                });
+            }
+            
+            // Mostrar mensajes de bienvenida
+            addActivityItem('Sistema iniciado', 'power-off');
+            addActivityItem('Conectando al WebSocket...', 'wifi');
+            
+            // Conectar automáticamente
+            connectWebSocketAutomatic();
+        }
+    </script>
+</body>
+</html>
